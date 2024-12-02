@@ -82,7 +82,7 @@ namespace OrionClientLib.Modules
 
             bool cpuEnabled = cpuHasher != null && cpuHasher is not DisabledHasher;
             bool gpuEnabled = gpuHasher != null && gpuHasher is not DisabledHasher;
-            bool setAffinity = cpuEnabled && !gpuEnabled && _currentData.Settings.AutoSetCPUAffinity;
+            bool setAffinity = cpuEnabled && !gpuEnabled && _currentData.Settings.CPUSetting.AutoSetCPUAffinity;
 
             //TODO: Check for efficiency cores
             if(OperatingSystem.IsWindows() && setAffinity)
@@ -90,7 +90,7 @@ namespace OrionClientLib.Modules
                 List<CoreInfo> coreInformation = SystemInformation.GetCoreInformation();
 
                 //Only use physical cores
-                if(coreInformation.Count <= _currentData.Settings.CPUThreads)
+                if(coreInformation.Count <= _currentData.Settings.CPUSetting.CPUThreads)
                 {
                     nint processorMask = 0;
                     nint fullMask = 0;
@@ -133,7 +133,7 @@ namespace OrionClientLib.Modules
             _poolInfoTable = new Table();
             _poolInfoTable.AddColumns(pool.TableHeaders());
 
-            _logger.Log(LogLevel.Debug, $"Checking setup requirements for '{pool.PoolName}'");
+            _logger.Log(LogLevel.Debug, $"Checking setup requirements for '{pool.Name}'");
 
             (Wallet wallet, string publicKey) = await data.Settings.GetWalletAsync();
 
@@ -170,14 +170,14 @@ namespace OrionClientLib.Modules
 
             bool cpuEnabled = cpuHasher != null && cpuHasher is not DisabledHasher;
             bool gpuEnabled = gpuHasher != null && gpuHasher is not DisabledHasher;
-            bool setAffinity = OperatingSystem.IsWindows() && cpuEnabled && !gpuEnabled && _currentData.Settings.AutoSetCPUAffinity;
+            bool setAffinity = OperatingSystem.IsWindows() && cpuEnabled && !gpuEnabled && _currentData.Settings.CPUSetting.AutoSetCPUAffinity;
 
             if (OperatingSystem.IsWindows() && setAffinity)
             {
                 List<CoreInfo> coreInformation = SystemInformation.GetCoreInformation();
 
                 //Only use physical cores
-                if (coreInformation.Count <= _currentData.Settings.CPUThreads)
+                if (coreInformation.Count <= _currentData.Settings.CPUSetting.CPUThreads)
                 {
                     nint processorMask = 0;
                     nint fullMask = 0;
@@ -202,9 +202,11 @@ namespace OrionClientLib.Modules
             {
                 _logger.Log(LogLevel.Debug, $"Initializing {cpuHasher.Name} {cpuHasher.HardwareType} hasher");
 
-                if(!await cpuHasher.InitializeAsync(pool, data.Settings))
+                var result = await cpuHasher.InitializeAsync(pool, data.Settings);
+
+                if (!result.success)
                 {
-                    _logger.Log(LogLevel.Warn, $"Failed to initialize CPU hasher");
+                    _logger.Log(LogLevel.Warn, $"Failed to initialize CPU hasher. Reason: {result.message}");
                 }
             }
 
@@ -212,13 +214,15 @@ namespace OrionClientLib.Modules
             {
                 _logger.Log(LogLevel.Debug, $"Initializing {gpuHasher.Name} {gpuHasher.HardwareType} hasher");
 
-                if(!await gpuHasher.InitializeAsync(pool, data.Settings))
+                var result = await gpuHasher.InitializeAsync(pool, data.Settings);
+
+                if (!result.success)
                 {
-                    _logger.Log(LogLevel.Warn, $"Failed to initialize GPU hasher");
+                    _logger.Log(LogLevel.Warn, $"Failed to initialize GPU hasher. Reason: {result.message}");
                 }
             }
 
-            _logger.Log(LogLevel.Debug, $"Connecting to pool '{pool.PoolName}'");
+            _logger.Log(LogLevel.Debug, $"Connecting to pool '{pool.Name}'");
 
             await pool.ConnectAsync(_cts.Token);
 
@@ -257,6 +261,8 @@ namespace OrionClientLib.Modules
                 _logger.Log(LogLevel.Warn, $"Pool info table expects {_poolInfoTable.Columns.Count} columns. Received: {e.Length}");
                 return;
             }
+
+            _poolInfoTable.ShowRowSeparators = true;
 
             //Allows 10 rows
             if (_poolInfoTable.Rows.Count >= 10)

@@ -20,7 +20,7 @@ using System.Threading.Tasks;
 
 namespace OrionClientLib.Hashers
 {
-    public abstract class BaseCPUHasher : IHasher
+    public abstract class BaseCPUHasher : IHasher, ISettingInfo
     {
         protected static readonly Logger _logger = LogManager.GetCurrentClassLogger();
 
@@ -31,6 +31,7 @@ namespace OrionClientLib.Hashers
         public event EventHandler<HashrateInfo> OnHashrateUpdate;
         public abstract string Name { get; }
         public abstract string Description { get; }
+        public virtual bool Display => true;
 
         protected Stopwatch _sw = Stopwatch.StartNew();
         protected TimeSpan _challengeStartTime;
@@ -50,16 +51,16 @@ namespace OrionClientLib.Hashers
         private int _threads = Environment.ProcessorCount;
         private Task _taskRunner;
 
-        public async Task<bool> InitializeAsync(IPool pool, Settings settings)
+        public async Task<(bool success, string message)> InitializeAsync(IPool pool, Settings settings)
         {
             if (Initialized)
             {
-                return false;
+                return (false, "Already initialized");
             }
 
             _pool = pool;
             _running = true;
-            _threads = settings.CPUThreads;
+            _threads = settings.CPUSetting.CPUThreads;
             _info = new HasherInfo();
 
             if (_pool != null)
@@ -132,7 +133,7 @@ namespace OrionClientLib.Hashers
             //    }
             //}
 
-            return true;
+            return (true, String.Empty);
         }
 
         private void _pool_OnChallengeUpdate(object? sender, NewChallengeInfo e)

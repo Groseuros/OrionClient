@@ -30,10 +30,12 @@ using ILGPU.Runtime.CPU;
 using OrionClientLib.Hashers.GPU.Baseline;
 using System.Diagnostics.CodeAnalysis;
 using Solnet.Rpc.Models;
+using OrionClientLib.Hashers.GPU.RTX4090Opt;
+using OrionClientLib.Hashers.GPU.AMDBaseline;
 
 namespace OrionClientLib.Hashers
 {
-    public abstract class BaseGPUHasher : IHasher, IGPUHasher
+    public abstract class BaseGPUHasher : IHasher, IGPUHasher, ISettingInfo
     {
         protected static readonly Logger _logger = LogManager.GetCurrentClassLogger();
 
@@ -46,6 +48,7 @@ namespace OrionClientLib.Hashers
         public event EventHandler<HashrateInfo> OnHashrateUpdate;
         public abstract string Name { get; }
         public abstract string Description { get; }
+        public virtual bool Display => true;
 
         protected Stopwatch _sw = Stopwatch.StartNew();
         protected TimeSpan _challengeStartTime;
@@ -77,26 +80,28 @@ namespace OrionClientLib.Hashers
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Interlocked))] //Needed for GPU
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(CudaBaselineGPUHasher))] //Need to add for each GPU to run on linux
-        public async Task<bool> InitializeAsync(IPool pool, Settings settings)
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Cuda4090OptGPUHasher))] //Need to add for each GPU to run on linux
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(OpenCLBaselineGPUHasher))] //Need to add for each GPU to run on linux
+        public async Task<(bool success, string message)> InitializeAsync(IPool pool, Settings settings)
         {
             if (Initialized)
             {
-                return false;
+                return (false, "Already initialized");
             }
 
             if (settings.GPUDevices == null || settings.GPUDevices.Count == 0)
             {
-                return false;
+                return (false, "No GPU devices selected. 'Run Setup' to select devices");
             }
 
             _pool = pool;
             _running = true;
             //Use total CPU threads for now
-            _threads = settings.CPUThreads; //TODO: Change to use remaining threads
+            _threads = Environment.ProcessorCount; //TODO: Change to use remaining threads
 
-            if(settings.ProgramGenerationThreads > 0)
+            if(settings.GPUSetting.ProgramGenerationThreads > 0)
             {
-                _threads = settings.ProgramGenerationThreads;
+                _threads = settings.GPUSetting.ProgramGenerationThreads;
             }
 
             _info = new HasherInfo();
@@ -132,15 +137,15 @@ namespace OrionClientLib.Hashers
             {
                 _logger.Log(LogLevel.Warn, $"No supported GPU devices selected");
 
-                return false;
+                return (false, $"No supported GPU devices selected");
             }
 
             //TODO: Allow additional buffer room
             int maxNonces = (int)((ulong)devicesToUse.Min(x => x.MemorySize) / GPUDeviceHasher.MemoryPerNonce);
 
-            if(settings.MaxGPUBlockSize > 0)
+            if(settings.GPUSetting.MaxGPUNoncePerBatch > 0)
             {
-                maxNonces = Math.Min(maxNonces, settings.MaxGPUBlockSize);
+                maxNonces = Math.Min(maxNonces, settings.GPUSetting.MaxGPUNoncePerBatch);
             }
 
             //Reduce to a power of 2
@@ -155,8 +160,9 @@ namespace OrionClientLib.Hashers
                 var device = devicesToUse[i];
 
                 GPUDeviceHasher dHasher = new GPUDeviceHasher(HashxKernel(), EquihashKernel(), device.CreateAccelerator(_context),
-                                                              device, i, _setupCPUData, _availableCPUData, _info,
-                                                              GetHashXKernelConfig(device, maxNonces), GetEquihashKernelConfig(device, maxNonces));
+                                                              device, i, _setupCPUData, _availableCPUData,
+                                                              GetHashXKernelConfig(device, maxNonces, settings), GetEquihashKernelConfig(device, maxNonces, settings), 
+                                                              CudaCacheOption());
                 try
                 {
 
@@ -182,7 +188,7 @@ namespace OrionClientLib.Hashers
             _taskRunner = new Task(RunProgramGeneration, TaskCreationOptions.LongRunning);
             _taskRunner.Start();
 
-            return true;
+            return (true, String.Empty);
         }
 
         private void DHasher_OnHashrateUpdate(object? sender, HashrateInfo e)
@@ -193,9 +199,9 @@ namespace OrionClientLib.Hashers
             OnHashrateUpdate?.Invoke(this, e);
         }
 
-        private void DHasher_OnDifficultyUpdate(object? sender, EventArgs e)
+        private void DHasher_OnDifficultyUpdate(object? sender, HasherInfo e)
         {
-            _pool?.DifficultyFound(_info.DifficultyInfo.GetUpdateCopy());
+            _pool?.DifficultyFound(e.DifficultyInfo.GetUpdateCopy());
         }
 
         private async void RunProgramGeneration()
@@ -433,9 +439,11 @@ namespace OrionClientLib.Hashers
         #region GPU Implemention
 
         public abstract Action<ArrayView<Instruction>, ArrayView<SipState>, ArrayView<ulong>> HashxKernel();
-        public abstract KernelConfig GetHashXKernelConfig(Device device, int maxNonces);
+        public abstract KernelConfig GetHashXKernelConfig(Device device, int maxNonces, Settings settings);
         public abstract Action<ArrayView<ulong>, ArrayView<EquixSolution>, ArrayView<ushort>, ArrayView<uint>> EquihashKernel();
-        public abstract KernelConfig GetEquihashKernelConfig(Device device, int maxNonces);
+        public abstract KernelConfig GetEquihashKernelConfig(Device device, int maxNonces, Settings settings);
+        public abstract CudaCacheConfiguration CudaCacheOption();
+
         public bool IsSupported()
         {
             List<Device> validDevices = GetDevices(true);
@@ -458,7 +466,7 @@ namespace OrionClientLib.Hashers
                     return context.Devices.Where(x => x.AcceleratorType != AcceleratorType.CPU).ToList();
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 return null;
             }
@@ -503,15 +511,19 @@ namespace OrionClientLib.Hashers
                 _availableCPUData.TryAdd(item);
             }
 
-            _info.NewChallenge(startNonce, endNonce, challenge.ToArray(), challengeId);
+            byte[] challengeCopy = challenge.ToArray();
+
+            _info.NewChallenge(startNonce, endNonce, challengeCopy, challengeId);
             _currentNonce = startNonce;
             _newChallengeWait.Set();
             _pauseMining.Set();
             _gpuDevices.ForEach(x =>
             {
                 x.ResetData();
+                x.NewChallenge(challengeId, challengeCopy, startNonce, endNonce);
                 x.ResumeMining();
             });
+
             _challengeStartTime = _sw.Elapsed;
             _logger.Log(LogLevel.Debug, $"[GPU] New challenge. Challenge Id: {challengeId}. Range: {startNonce} - {endNonce}");
 
@@ -550,7 +562,7 @@ namespace OrionClientLib.Hashers
 
             #endregion
 
-            public event EventHandler OnDifficultyUpdate;
+            public event EventHandler<HasherInfo> OnDifficultyUpdate;
             public event EventHandler<HashrateInfo> OnHashrateUpdate;
 
             public bool Executing => !_copyToWaiting || !_copyFromWaiting || !_executingWaiting;
@@ -567,7 +579,7 @@ namespace OrionClientLib.Hashers
             private Device _device = null;
             private KernelConfig _hashxConfig;
             private KernelConfig _equihashConfig;
-            private HasherInfo _hasherInfo;
+            private HasherInfo _hasherInfo = new HasherInfo();
 
 
             private List<GPUDeviceData> _deviceData = new List<GPUDeviceData>();
@@ -578,8 +590,6 @@ namespace OrionClientLib.Hashers
 
             private BlockingCollection<CPUData> _readyCPUData;
             private BlockingCollection<CPUData> _availableCPUData;
-
-
 
             private Action<ArrayView<Instruction>, ArrayView<SipState>, ArrayView<ulong>> _hashxMethod;
             private Action<ArrayView<ulong>, ArrayView<EquixSolution>, ArrayView<ushort>, ArrayView<uint>> _equihashMethod;
@@ -607,9 +617,9 @@ namespace OrionClientLib.Hashers
                          Accelerator accelerator, Device device, int deviceId,
                          BlockingCollection<CPUData> readyCPUData, 
                          BlockingCollection<CPUData> availableCPUData,
-                         HasherInfo hasherInfo,
                          KernelConfig hashxConfig,
-                         KernelConfig equihashConfig)
+                         KernelConfig equihashConfig,
+                         CudaCacheConfiguration cacheConfiguration)
             {
                 _hashxMethod = hashxKernel;
                 _equihashMethod = equihashKernel;
@@ -620,13 +630,12 @@ namespace OrionClientLib.Hashers
                 _accelerator = accelerator;
                 _hashxConfig = hashxConfig;
                 _equihashConfig = equihashConfig;
-                _hasherInfo = hasherInfo;
 
                 if(accelerator is CudaAccelerator cudaAccelerator)
                 {
                     //Equihash is better with equal or L1 preference
                     //Baseline suffers with L1 preference
-                    cudaAccelerator.CacheConfiguration = CudaCacheConfiguration.PreferEqual;
+                    cudaAccelerator.CacheConfiguration = cacheConfiguration;
                 }
             }
 
@@ -903,7 +912,7 @@ namespace OrionClientLib.Hashers
                                     }
 
                                     currentBestDifficulty = difficulty;
-                                    _hasherInfo.UpdateDifficulty(difficulty, MemoryMarshal.Cast<ushort, byte>(eSolution).ToArray(), nonce);
+                                    _hasherInfo.UpdateDifficulty(difficulty, MemoryMarshal.Cast<ushort, byte>(eSolution).ToArray(), nonce, false);
                                 }
 
                                 [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -914,8 +923,6 @@ namespace OrionClientLib.Hashers
                                     program.InitCompiler(_solver.CompiledProgram);
 
                                     var result = _solver.Verify(program, solution[0]);
-
-                                    var asdfasdf = program.Emulate(0);
 
                                     program.DestroyCompiler();
 
@@ -973,7 +980,7 @@ namespace OrionClientLib.Hashers
                             //Only notifies that there was a better difficulty found
                             if (currentBestDifficulty > prevBestDifficulty)
                             {
-                                OnDifficultyUpdate?.Invoke(this, EventArgs.Empty);
+                                OnDifficultyUpdate?.Invoke(this, _hasherInfo);
                             }
                         }
 
@@ -1040,6 +1047,11 @@ namespace OrionClientLib.Hashers
 
                     _copyToData.TryAdd(deviceData);
                 }
+            }
+
+            public void NewChallenge(int challengeId, byte[] challenge, ulong startNonce, ulong endNonce)
+            {
+                _hasherInfo.NewChallenge(startNonce, endNonce, challenge, challengeId);
             }
 
             private bool GetDeviceData(GPUDeviceData.Stage stage, int timeout, out GPUDeviceData data)

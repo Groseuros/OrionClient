@@ -9,12 +9,14 @@ using System.Threading.Tasks;
 
 namespace OrionClientLib.Hashers
 {
-    public abstract class DisabledHasher : IHasher
+    public abstract class DisabledHasher : IHasher, ISettingInfo
     {
         public abstract IHasher.Hardware HardwareType { get; }
 
         public string Name => $"Disabled";
         public string Description => $"Disables {HardwareType} hasher";
+        public bool Display => true;
+
         public bool Initialized => true;
         public bool IsMiningPaused => true;
         public TimeSpan CurrentChallengeTime { get; private set; } = TimeSpan.FromMinutes(5);
@@ -23,9 +25,9 @@ namespace OrionClientLib.Hashers
         public event EventHandler<HashrateInfo> OnHashrateUpdate;
 
 
-        public async Task<bool> InitializeAsync(IPool pool, Settings settings)
+        public async Task<(bool success, string message)> InitializeAsync(IPool pool, Settings settings)
         {
-            return true;
+            return (true, String.Empty);
         }
 
         public bool IsSupported()

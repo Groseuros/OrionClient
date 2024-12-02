@@ -10,9 +10,10 @@ namespace OrionClientLib.Pools
 {
     public class CustomOreHQPool : OreHQPool
     {
-        public override string PoolName { get; } = "Custom Ore-HQ Pool";
-        public override string DisplayName => $"{PoolName} ({WebsocketUrl?.Host ?? "Unknown"})";
+        public override string Name { get; } = "Custom Ore-HQ Pool";
+        public override string DisplayName => $"{Name} ({WebsocketUrl?.Host ?? "Unknown"})";
         public override string Description => $"Custom pool using Ore-HQ pool implementation";
+        public override bool Display => true;
         public override Coin Coins { get; } = Coin.Ore;
 
         public override Dictionary<string, string> Features { get; } = new Dictionary<string, string>();
@@ -20,12 +21,11 @@ namespace OrionClientLib.Pools
         public override bool HideOnPoolList { get; } = false;
         public override string HostName { get; protected set; }
 
-        public override double MiniumumRewardPayout => 0.05;
         public override Uri WebsocketUrl => _poolSettings?.CustomDomain == null ? null : new Uri($"wss://{_poolSettings.CustomDomain}/v2/ws?timestamp={_timestamp}");
 
         public override void SetWalletInfo(Wallet wallet, string publicKey)
         {
-            _poolSettings ??= new HQPoolSettings(PoolName);
+            _poolSettings ??= new HQPoolSettings(Name);
 
             if (String.IsNullOrEmpty(HostName))
             {

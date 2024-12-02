@@ -13,13 +13,13 @@ using ILGPU.IR.Intrinsics;
 using ILGPU.IR;
 using System.Runtime.CompilerServices;
 
-namespace OrionClientLib.Hashers.GPU.Baseline
+namespace OrionClientLib.Hashers.GPU.AMDBaseline
 {
     //This equihash implementation needs to be rewritten as currently 4% of solutions are invalid
     //Potential opts:
     //  - Split loops to take advantage of larger block sizes
     //  - Remove scratch usage
-    public partial class CudaBaselineGPUHasher
+    public partial class OpenCLBaselineGPUHasher
     {
         public const int BlockSize = 128;
         public const int TotalValues = ushort.MaxValue + 1;
@@ -31,7 +31,7 @@ namespace OrionClientLib.Hashers.GPU.Baseline
         private const int NumCoarseBuckets = 256;
 
         private const int IndexSpace = 1 << 16;
-        private const int CacheSize = 32; //ulong values
+        private const int CacheSize = 16; //ulong values
         private const int Cache2Size = 4; //ulong values
         private const int MaxSharedSize = 49152;
         //public const int MaxConcurrentGroups = 160; //Limited by shared memory
@@ -73,7 +73,7 @@ namespace OrionClientLib.Hashers.GPU.Baseline
         #region Intrinsics
 
         [IntrinsicMethod(nameof(ClearIndex_Generate))]
-        [IntrinsicImplementation]
+        //[IntrinsicImplementation]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private unsafe static void ClearIndex(ref int indices, int index)
         {
@@ -110,7 +110,7 @@ namespace OrionClientLib.Hashers.GPU.Baseline
         }
 
         [IntrinsicMethod(nameof(ClearScratchIndices_Generate))]
-        [IntrinsicImplementation]
+        //[IntrinsicImplementation]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private unsafe static void ClearScratchIndices(ref ulong memory)
         {
@@ -150,7 +150,7 @@ namespace OrionClientLib.Hashers.GPU.Baseline
         }
 
         [IntrinsicMethod(nameof(LoadToSharedU8_Generate))]
-        [IntrinsicImplementation]
+        //[IntrinsicImplementation]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private unsafe static void LoadToSharedU8(ref ulong shared, ref ulong global)
         {
@@ -192,7 +192,7 @@ namespace OrionClientLib.Hashers.GPU.Baseline
         }
 
         [IntrinsicMethod(nameof(LoadToSharedU4_Generate))]
-        [IntrinsicImplementation]
+        //[IntrinsicImplementation]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private unsafe static void LoadToSharedU4(ref uint shared, ref uint global)
         {
@@ -233,7 +233,7 @@ namespace OrionClientLib.Hashers.GPU.Baseline
         }
 
         [IntrinsicMethod(nameof(LoadStageData_Generate))]
-        [IntrinsicImplementation]
+        //[IntrinsicImplementation]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private unsafe static void LoadStageData(ref ulong shared, ref ulong global, ulong u0, ulong u1, ulong u2, ulong u3)
         {
